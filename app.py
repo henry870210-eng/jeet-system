@@ -270,6 +270,8 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
     ax1.fill(angles, avg_scaled, color=COLOR_RADAR_AVG, alpha=0.13, zorder=2)
 
     # ── 같은 반 평균: 주황 일점쇄선(-.) + 채우기 ─────────────
+    radar_max = max(s_scaled)          # 학생/과정/반 평균 전체의 최댓값 추적
+    radar_max = max(radar_max, max(avg_scaled))
     if class_cat_ratio is not None:
         cls_raw    = class_cat_ratio.reindex(ordered_labels).fillna(0).values.tolist()
         cls_scaled = _scalel(cls_raw) + [_scale(cls_raw[0])]
@@ -277,8 +279,10 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
                  color=COLOR_RADAR_UNIT, linewidth=1.8, linestyle='-.', zorder=4,
                  label='반 평균')
         ax1.fill(angles, cls_scaled, color=COLOR_RADAR_UNIT, alpha=0.13, zorder=1)
+        radar_max = max(radar_max, max(cls_scaled))
 
-    ax1_limit = max(50, min(115, max(s_scaled) + 10))
+    # 세 선 모두가 안에 들어오도록 전체 최댓값 기준으로 상한 설정 (+여유 10)
+    ax1_limit = max(50, min(120, radar_max + 10))
     ax1.set_ylim(0, ax1_limit)
     ax1.set_xticks(angles[:-1])
     ax1.set_xticklabels([])
@@ -317,11 +321,27 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
     s_pct_raw = (final_unit_data['득점'] / final_unit_data['배점'] * 100).fillna(0)
     s_pct     = s_pct_raw.apply(_scale)                    # 표시용 (신규생=실제값)
     max_b_val = s_pct.max() if not s_pct.empty else 0
+
+    # 평균선들도 상한 계산에 포함 (학생보다 높아도 잘리지 않도록)
+    def _avg_line_scaled(avg_df):
+        vals = []
+        for u in final_unit_data.index:
+            denom = final_unit_data.loc[u, '배점'] if u in final_unit_data.index else 0
+            numer = avg_df.loc[u, '평균득점'] if u in avg_df.index else 0
+            vals.append(_scale((numer / denom * 100) if denom > 0 else 0))
+        return vals
+
+    avg_unit_pct = (_avg_line_scaled(unit_avg_data)
+                    if unit_avg_data is not None and not unit_avg_data.empty else [])
+    cls_unit_pct = (_avg_line_scaled(class_unit_avg_data)
+                    if class_unit_avg_data is not None and not class_unit_avg_data.empty else [])
+    max_b_val = max([max_b_val] + avg_unit_pct + cls_unit_pct)
+
     if is_new:
         # 신규생: 실제값(0~100) 기준, 0부터 시작 (막대 위 수치 라벨 공간 확보)
-        ax2_limit = max(55, min(112, max_b_val + 18))
+        ax2_limit = max(55, min(120, max_b_val + 18))
     else:
-        ax2_limit = max(50, min(115, max_b_val + 15))
+        ax2_limit = max(50, min(120, max_b_val + 15))
 
     # ── 학생 막대: 파랑 ────────────────────────────────────────
     ax2.bar(x_pos, s_pct, color=COLOR_STUDENT, alpha=0.85,
@@ -339,13 +359,7 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
                          path_effects=[path_effects.withStroke(linewidth=2.0, foreground='white')])
 
     # ── 시험지 전체 평균: 초록 실선 + 원형 마커 ───────────────
-    if unit_avg_data is not None and not unit_avg_data.empty:
-        avg_unit_pct = []
-        for u in final_unit_data.index:
-            denom  = final_unit_data.loc[u, '배점'] if u in final_unit_data.index else 0
-            numer  = unit_avg_data.loc[u, '평균득점'] if u in unit_avg_data.index else 0
-            raw_pct = (numer / denom * 100) if denom > 0 else 0
-            avg_unit_pct.append(_scale(raw_pct))
+    if avg_unit_pct:
         ax2.plot(x_pos, avg_unit_pct,
                  color=COLOR_AVG, linewidth=2.2, linestyle='-',
                  marker='o', markersize=6,
@@ -366,20 +380,16 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
                              path_effects=[path_effects.withStroke(linewidth=1.8, foreground='white')])
 
     # ── 같은 반 평균: 주황 실선 + 다이아몬드 마커 ─────────────
-    if class_unit_avg_data is not None and not class_unit_avg_data.empty:
-        cls_unit_pct = []
-        for u in final_unit_data.index:
-            denom  = final_unit_data.loc[u, '배점'] if u in final_unit_data.index else 0
-            numer  = class_unit_avg_data.loc[u, '평균득점'] if u in class_unit_avg_data.index else 0
-            raw_pct = (numer / denom * 100) if denom > 0 else 0
-            cls_unit_pct.append(_scale(raw_pct))
+    if cls_unit_pct:
         ax2.plot(x_pos, cls_unit_pct,
                  color=COLOR_UNIT, linewidth=2.2, linestyle='-',
                  marker='D', markersize=5,
                  markerfacecolor='white', markeredgewidth=2,
                  zorder=5, label='반 평균')
 
-    ax2.legend(loc='upper right', fontsize=7.5, framealpha=0.85, handlelength=2.5)
+    ax2.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02),
+               ncol=3, fontsize=7.5, framealpha=0.9, handlelength=2.0,
+               columnspacing=1.2, borderaxespad=0.2)
     ax2.set_xticks(x_pos)
     ax2.set_xticklabels([textwrap.fill(str(l), 5) for l in final_unit_data.index],
                         fontsize=8, fontweight='bold')
@@ -402,7 +412,7 @@ def draw_report_figure(fig, s_row, student_name, student_grade, selected_test,
     ax2.grid(axis='y', color=COLOR_GRID, linestyle='-', linewidth=0.5, zorder=0)
 
     title2 = ax2.set_title("▶ 단원별 성취도 (%)",
-                            pad=25, fontsize=14, fontweight='bold', color=COLOR_NAVY)
+                            pad=34, fontsize=14, fontweight='bold', color=COLOR_NAVY)
     title2.set_path_effects([path_effects.withStroke(linewidth=1, foreground=COLOR_NAVY)])
 
     # ══════════════════════════════════════════════════════════
@@ -633,9 +643,11 @@ def prepare_report_data(selected_test):
     else:
         df_scores = pd.DataFrame(0, index=[0], columns=q_cols)
 
-    avg_per_q      = df_scores.mean()
+    avg_per_q      = df_scores.mean()   # 문항별 정답률(0~1)
     total_analysis = df_info.copy()
-    total_analysis['평균득점'] = total_analysis['문항번호'].apply(lambda x: avg_per_q.get(str(x), 0))
+    # 정답률(0~1)에 배점을 곱해 '평균 득점'으로 변환 → 학생 득점과 동일한 단위
+    total_analysis['정답률'] = total_analysis['문항번호'].apply(lambda x: avg_per_q.get(str(x), 0))
+    total_analysis['평균득점'] = total_analysis['정답률'] * total_analysis['배점']
     
     avg_cat_ratio = (total_analysis.groupby('영역')['평균득점'].sum() /
                      total_analysis.groupby('영역')['배점'].sum() * 100).fillna(0)
@@ -690,9 +702,10 @@ def generate_jeet_expert_report(target_name, selected_test):
                                             columns=cls_analysis['문항번호'].tolist())
                 for q in cls_analysis['문항번호'].tolist():
                     cls_scores[q] = class_students[q].apply(safe_to_binary) if q in class_students.columns else 0
-                cls_avg_per_q = cls_scores.mean()
+                cls_avg_per_q = cls_scores.mean()   # 반 문항별 정답률(0~1)
                 cls_total     = cls_analysis.copy()
-                cls_total['평균득점'] = cls_total['문항번호'].apply(lambda x: cls_avg_per_q.get(str(x), 0))
+                cls_total['정답률'] = cls_total['문항번호'].apply(lambda x: cls_avg_per_q.get(str(x), 0))
+                cls_total['평균득점'] = cls_total['정답률'] * cls_total['배점']
                 class_cat_ratio = (cls_total.groupby('영역')['평균득점'].sum() /
                                    cls_total.groupby('영역')['배점'].sum() * 100).fillna(0)
                 class_unit_avg_data = cls_total.groupby('단원').agg({'평균득점':'sum'})
@@ -767,7 +780,8 @@ def generate_batch_report(target_class, selected_test, selected_students=None):
                         cls_scores[q] = same_class[q].apply(safe_to_binary) if q in same_class.columns else 0
                     cls_avg_per_q = cls_scores.mean()
                     cls_total     = cls_analysis.copy()
-                    cls_total['평균득점'] = cls_total['문항번호'].apply(lambda x: cls_avg_per_q.get(str(x), 0))
+                    cls_total['정답률'] = cls_total['문항번호'].apply(lambda x: cls_avg_per_q.get(str(x), 0))
+                    cls_total['평균득점'] = cls_total['정답률'] * cls_total['배점']
                     class_cat_ratio = (cls_total.groupby('영역')['평균득점'].sum() /
                                        cls_total.groupby('영역')['배점'].sum() * 100).fillna(0)
                     class_unit_avg_data = cls_total.groupby('단원').agg({'평균득점':'sum'})
